@@ -12,7 +12,6 @@ import columnRoutes from "./routes/column";
 dotenv.config();
 
 const app: Express = express();
-const port = process.env.PORT || 5000;
 
 // Middleware'leri ekliyorum
 app.use(cors()); // CORS'u aktif ediyorum
@@ -27,8 +26,11 @@ app.use("/api/columns", columnRoutes); // Column işlemleri için route'ları ek
 connectDB();
 
 // Sunucuyu başlatıyorum
-app.listen(port, () => {
-  console.log(`Server is running on port ${port}`);
-});
+if (process.env.NODE_ENV !== "production") {
+  const PORT = process.env.PORT || 3000;
+  app.listen(PORT, () => {
+    console.log(`Server is running on port ${PORT}`);
+  });
+}
 
 export default app;
