@@ -86,3 +86,18 @@ export const login = async (
     res.status(500).json({ message: "Server error" }); // Sunucu hatası durumunda hata mesajı döndürüyorum
   }
 };
+
+// Kullanıcı çıkış işlemi
+export const logout = async (req: Request, res: Response) => {
+  try {
+    res.status(200).json({
+      success: true,
+      message: "Successfully logged out",
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: "Error during logout",
+    });
+  }
+};

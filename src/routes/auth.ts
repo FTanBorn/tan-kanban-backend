@@ -1,7 +1,7 @@
 // src/routes/auth.ts
 
 import { Router } from "express";
-import { register, login } from "../controllers/authController";
+import { register, login, logout } from "../controllers/authController";
 
 const router = Router();
 
@@ -10,5 +10,8 @@ router.post("/register", register as any); // Type assertion kullandım
 
 // Kullanıcı giriş işlemi için bir endpoint ekledim
 router.post("/login", login as any); // Type assertion kullandım
+
+// Kullanıcı çıkış işlemi için bir endpoint ekledim
+router.post("/logout", logout as any); // Type assertion kullandım
 
 export default router;
