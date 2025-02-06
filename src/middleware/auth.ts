@@ -33,15 +33,25 @@ export const protect = async (
     try {
       token = req.headers.authorization.split(" ")[1]; // "Bearer ..." formatından token'ı alıyorum
       const decoded = jwt.verify(token, process.env.JWT_SECRET!) as IPayload; // Token'ı doğruluyorum
-      req.user = await User.findById(decoded.id).select("-password"); // Kullanıcıyı şifresi olmadan alıyorum
-      next(); // Bir sonraki middleware'e geçiyorum
+
+      // Kullanıcıyı şifresi olmadan alıyorum
+      const user = await User.findById(decoded.id).select("-password");
+
+      if (!user) {
+        return res
+          .status(401)
+          .json({ message: "Not authorized, user not found" });
+      }
+
+      req.user = user; // Kullanıcı bilgisini request nesnesine ekliyorum
+      return next(); // Bir sonraki middleware'e geçiyorum
     } catch (error) {
-      res.status(401).json({ message: "Not authorized, token failed" }); // Token geçersizse hata döndürüyorum
+      return res.status(401).json({ message: "Not authorized, token failed" }); // Token geçersizse hata döndürüyorum
     }
   }
 
   // Token yoksa yetkisiz erişim hatası veriyorum
   if (!token) {
-    res.status(401).json({ message: "Not authorized, no token" });
+    return res.status(401).json({ message: "Not authorized, no token" });
   }
 };

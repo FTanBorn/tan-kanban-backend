@@ -1,3 +1,5 @@
+// src/routes/board.ts
+
 import { Router } from "express";
 import { protect } from "../middleware/auth";
 import {
@@ -6,12 +8,16 @@ import {
   getBoardById,
   updateBoard,
   deleteBoard,
-  addMember,
+  inviteMember,
+  respondToInvitation,
+  getMyInvitations,
+  leaveBoard,
+  removeMember,
 } from "../controllers/boardController";
 
 const router = Router();
 
-router.use(protect); // Tüm board işlemleri için authentication zorunlu
+router.use(protect as any); // Tüm board işlemleri için authentication zorunlu
 
 // Tüm board'ları getiriyorum veya yeni bir tane oluşturuyorum
 router
@@ -26,7 +32,13 @@ router
   .put(updateBoard as any) // Board'u güncelle
   .delete(deleteBoard as any); // Board'u sil
 
-// Board'a yeni bir üye ekliyorum
-router.post("/:id/members", addMember as any);
+// Davet sistemi rotaları
+router.get("/invitations/received", getMyInvitations as any);
+router.post("/:id/invite", inviteMember as any);
+router.post("/invitations/:invitationId/respond", respondToInvitation as any);
+
+// Board'dan ayrılma ve üye yönetimi rotaları
+router.post("/:boardId/leave", leaveBoard as any);
+router.delete("/:boardId/members/:memberId", removeMember as any); // Yeni eklenen endpoint
 
 export default router;

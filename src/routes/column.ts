@@ -9,7 +9,7 @@ import {
 
 const router = Router();
 
-router.use(protect); // Tüm column işlemleri için authentication zorunlu
+router.use(protect as any); // Tüm column işlemleri için authentication zorunlu
 
 // Yeni bir column oluşturuyorum
 router.route("/").post(createColumn as any);
