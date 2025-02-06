@@ -150,10 +150,37 @@ export const updateBoard = async (
       req.params.id
     );
 
+    const oldName = board.name; // Eski board adını saklayalım
     if (name) board.name = name;
     if (description) board.description = description;
 
     const updatedBoard = await board.save();
+
+    // Tüm üyelere bildirim gönder (board sahibi hariç)
+    const notifications = board.members
+      .filter((memberId) => memberId.toString() !== req.user._id.toString())
+      .map((memberId) => ({
+        recipient: memberId,
+        sender: req.user._id,
+        board: board._id,
+        type: NotificationType.BOARD_UPDATED,
+        priority: NotificationPriority.LOW,
+        message: `The board "${oldName}" has been updated`,
+        metadata: {
+          oldName,
+          newName: name || oldName,
+          updatedBy: req.user._id,
+          changes: {
+            nameChanged: Boolean(name),
+            descriptionChanged: Boolean(description),
+          },
+        },
+      }));
+
+    if (notifications.length > 0) {
+      await Notification.insertMany(notifications);
+    }
+
     res.json(updatedBoard);
   } catch (error) {
     handleServerError(res, error);
@@ -167,6 +194,28 @@ export const deleteBoard = async (req: AuthRequest, res: Response) => {
       req.user._id.toString(),
       req.params.id
     );
+
+    // Tüm üyelere bildirim gönder (board sahibi hariç)
+    const notifications = board.members
+      .filter((memberId) => memberId.toString() !== req.user._id.toString())
+      .map((memberId) => ({
+        recipient: memberId,
+        sender: req.user._id,
+        board: board._id,
+        type: NotificationType.BOARD_DELETED,
+        priority: NotificationPriority.HIGH, // Silme işlemi önemli olduğu için HIGH priority
+        message: `The board "${board.name}" has been deleted`,
+        metadata: {
+          boardName: board.name,
+          deletedBy: req.user._id,
+          deletedAt: new Date(),
+        },
+      }));
+
+    if (notifications.length > 0) {
+      await Notification.insertMany(notifications);
+    }
+
     await board.deleteOne();
     res.json({ message: "Board removed" });
   } catch (error) {
@@ -210,6 +259,20 @@ export const removeMember = async (req: AuthRequest, res: Response) => {
       { $pull: { members: memberId } },
       { new: true }
     );
+
+    // Çıkarılan üyeye bildirim gönder
+    await Notification.create({
+      recipient: new Types.ObjectId(memberId),
+      sender: req.user._id,
+      board: board._id,
+      type: NotificationType.MEMBER_REMOVED,
+      priority: NotificationPriority.MEDIUM,
+      message: `You have been removed from the board "${board.name}"`,
+      metadata: {
+        boardName: board.name,
+        removedBy: req.user._id,
+      },
+    });
 
     res.json({ message: "Member removed successfully" });
   } catch (error) {
@@ -412,6 +475,20 @@ export const leaveBoard = async (req: AuthRequest, res: Response) => {
       { $pull: { members: req.user._id } },
       { new: true }
     );
+
+    // Board sahibine bildirim gönder
+    await Notification.create({
+      recipient: board.owner,
+      sender: req.user._id,
+      board: board._id,
+      type: NotificationType.MEMBER_LEFT,
+      priority: NotificationPriority.LOW,
+      message: `A member has left your board "${board.name}"`,
+      metadata: {
+        boardName: board.name,
+        memberId: req.user._id,
+      },
+    });
 
     res.json({ message: "Successfully left the board" });
   } catch (error) {
