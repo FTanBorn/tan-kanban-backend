@@ -10,7 +10,7 @@ import {
 
 const router = Router();
 
-router.use(protect); // Tüm task işlemleri için authentication zorunlu
+router.use(protect as any); // Tüm task işlemleri için authentication zorunlu
 
 // Yeni bir task oluşturuyorum
 router.post("/column/:columnId/tasks", createTask as any);
