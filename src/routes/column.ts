@@ -1,3 +1,4 @@
+// src/routes/column.ts
 import { Router } from "express";
 import { protect } from "../middleware/auth";
 import {
@@ -5,22 +6,18 @@ import {
   getColumns,
   updateColumn,
   deleteColumn,
+  updateColumnOrder,
 } from "../controllers/columnController";
 
 const router = Router();
 
-router.use(protect as any); // Tüm column işlemleri için authentication zorunlu
+router.use(protect as any);
 
-// Yeni bir column oluşturuyorum
-router.route("/").post(createColumn as any);
 
-// Belirli bir board'un tüm column'larını getiriyorum
-router.route("/board/:boardId").get(getColumns as any);
-
-// Belirli bir column'u güncelliyor veya siliyorum
-router
-  .route("/:id")
-  .put(updateColumn as any) // Column'u güncelle
-  .delete(deleteColumn as any); // Column'u sil
+router.post("/", createColumn as any);
+router.get("/board/:boardId", getColumns as any);
+router.put("/:columnId", updateColumn as any);
+router.delete("/:columnId", deleteColumn as any);
+router.put("/board/:boardId/order", updateColumnOrder as any);
 
 export default router;
