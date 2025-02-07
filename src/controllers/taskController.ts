@@ -1,9 +1,10 @@
 // src/controllers/taskController.ts
 import { Request, Response } from "express";
 import { Schema, Types } from "mongoose";
-import Column from "../models/Column";
+
 import Board from "../models/Board";
 import { ITask, ITaskData } from "../models/interfaces/Task";
+import { Column } from "../models/Column";
 
 // AuthRequest arayüzüne kullanıcı bilgilerini ekliyorum.
 interface AuthRequest extends Request {

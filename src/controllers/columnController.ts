@@ -1,5 +1,5 @@
 // src/controllers/columnController.ts
-import { Request, Response } from "express";
+import { Response } from "express";
 import { Column } from "../models/Column";
 import Board from "../models/Board";
 import { AuthRequest } from "../types/express";
