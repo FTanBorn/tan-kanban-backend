@@ -1,11 +1,41 @@
 // src/controllers/boardController.ts
 import { Request, Response } from "express";
 import { Types, Document } from "mongoose";
-import Board from "../models/Board";
+import Board, { ColumnType, IBoard, IColumnData } from "../models/Board";
 import User from "../models/User";
 import BoardInvitation from "../models/BoardInvitation";
 import { NotificationType, NotificationPriority } from "../models/Notification";
 import Notification from "../models/Notification";
+
+// Request interfaces
+interface CreateBoardRequest {
+  name: string;
+  description?: string;
+}
+
+interface UpdateBoardRequest {
+  name?: string;
+  description?: string;
+}
+
+interface AddColumnRequest {
+  name: string;
+  type?: ColumnType;
+  color?: string;
+  limit?: number;
+}
+
+interface UpdateColumnRequest {
+  name?: string;
+  type?: ColumnType;
+  color?: string;
+  limit?: number;
+}
+
+interface UpdateColumnOrderRequest {
+  columnId: string;
+  newOrder: number;
+}
 
 // Tür (Type) Tanımlamaları
 interface AuthRequest extends Request {
@@ -50,8 +80,37 @@ interface AddMemberRequest {
 
 // Yardımcı Fonksiyonlar
 const handleServerError = (res: Response, error: unknown) => {
-  console.error(error);
-  res.status(500).json({ message: "Server error" });
+  console.error("Server error:", error);
+  res.status(500).json({
+    message: "Server error",
+    error: process.env.NODE_ENV === "development" ? error : undefined,
+  });
+};
+
+const checkBoardAccess = async (
+  boardId: string,
+  userId: Types.ObjectId,
+  requireOwner: boolean = false
+): Promise<IBoard> => {
+  const board = await Board.findById(boardId);
+  if (!board) {
+    throw new Error("Board not found");
+  }
+
+  const isOwner = board.owner.toString() === userId.toString();
+  const isMember = board.members.some(
+    (m) => m.toString() === userId.toString()
+  );
+
+  if (requireOwner && !isOwner) {
+    throw new Error("Only board owner can perform this action");
+  }
+
+  if (!isOwner && !isMember) {
+    throw new Error("Not authorized");
+  }
+
+  return board;
 };
 
 const createNotification = async (params: {
@@ -87,24 +146,27 @@ export const createBoard = async (
 ) => {
   try {
     const { name, description } = req.body;
+
     const board = await Board.create({
       name,
       description,
       owner: req.user._id,
       members: [req.user._id],
     });
+
     res.status(201).json(board);
   } catch (error) {
     handleServerError(res, error);
   }
 };
 
-// Board'ları Getirme
+// Board'ları getir
 export const getBoards = async (req: AuthRequest, res: Response) => {
   try {
     const boards = await Board.find({
       $or: [{ owner: req.user._id }, { members: req.user._id }],
     }).populate("owner", "name email");
+
     res.json(boards);
   } catch (error) {
     handleServerError(res, error);
@@ -218,6 +280,196 @@ export const deleteBoard = async (req: AuthRequest, res: Response) => {
 
     await board.deleteOne();
     res.json({ message: "Board removed" });
+  } catch (error) {
+    handleServerError(res, error);
+  }
+};
+
+// Board'a yeni kolon ekleme
+export const addColumnToBoard = async (
+  req: AuthRequest & { body: AddColumnRequest },
+  res: Response
+) => {
+  try {
+    const board = await checkBoardAccess(
+      req.params.boardId,
+      req.user._id,
+      true
+    );
+
+    if (board.columns.length >= 10) {
+      return res.status(400).json({
+        message: "Maximum column limit (10) reached",
+      });
+    }
+
+    const {
+      name,
+      type = ColumnType.CUSTOM,
+      color = "#E2E8F0",
+      limit,
+    } = req.body;
+    const order = board.columns.length;
+
+    const newColumn: IColumnData = {
+      name,
+      type,
+      order,
+      isDefault: false,
+      color,
+      limit,
+    };
+
+    board.columns.push(newColumn);
+    await board.save();
+
+    // Yeni kolonu response olarak dönerken _id'yi de ekle
+    const savedColumn = board.columns[board.columns.length - 1];
+
+    res.status(201).json({
+      _id: savedColumn._id, // MongoDB'nin oluşturduğu _id
+      name: savedColumn.name,
+      type: savedColumn.type,
+      order: savedColumn.order,
+      isDefault: savedColumn.isDefault,
+      color: savedColumn.color,
+      limit: savedColumn.limit,
+      boardId: board._id,
+    });
+  } catch (error) {
+    handleServerError(res, error);
+  }
+};
+
+// Kolon güncelleme
+export const updateBoardColumn = async (
+  req: AuthRequest & { body: UpdateColumnRequest },
+  res: Response
+) => {
+  try {
+    const { boardId, columnId } = req.params; // Get columnId from params instead of body
+    const { name, type, color, limit } = req.body; // Destructure the actual fields we expect
+
+    const board = await checkBoardAccess(boardId, req.user._id, true);
+
+    const columnIndex = board.columns.findIndex(
+      (col: any) => col._id.toString() === columnId
+    );
+
+    if (columnIndex === -1) {
+      return res.status(404).json({ message: "Column not found" });
+    }
+
+    const column = board.columns[columnIndex];
+
+    // Varsayılan kolonları koruma
+    if (column.isDefault && type) {
+      return res.status(400).json({
+        message: "Cannot change type of default column",
+      });
+    }
+
+    // Update column fields
+    Object.assign(column, {
+      name: name ?? column.name,
+      type: type ?? column.type,
+      color: color ?? column.color,
+      limit: limit ?? column.limit,
+    });
+
+    await board.save();
+    res.json(column);
+  } catch (error) {
+    handleServerError(res, error);
+  }
+};
+
+// Kolon silme
+export const deleteBoardColumn = async (req: AuthRequest, res: Response) => {
+  try {
+    const { boardId, columnId } = req.params;
+    const board = await checkBoardAccess(boardId, req.user._id, true);
+
+    const columnIndex = board.columns.findIndex(
+      (col: any) => col._id.toString() === columnId
+    );
+
+    if (columnIndex === -1) {
+      return res.status(404).json({ message: "Column not found" });
+    }
+
+    const column = board.columns[columnIndex];
+
+    if (column.isDefault) {
+      return res.status(400).json({
+        message: "Cannot delete default column",
+      });
+    }
+
+    // Remove the column
+    board.columns.splice(columnIndex, 1);
+
+    // Reorder remaining columns
+    board.columns.forEach((col, index) => {
+      if (col.order > column.order) {
+        col.order -= 1;
+      }
+    });
+
+    await board.save();
+    res.json({ message: "Column deleted successfully" });
+  } catch (error) {
+    handleServerError(res, error);
+  }
+};
+
+// Kolon sırasını güncelleme
+export const updateColumnOrder = async (
+  req: AuthRequest & { body: UpdateColumnOrderRequest },
+  res: Response
+) => {
+  try {
+    const { boardId } = req.params;
+    const { columnId, newOrder } = req.body;
+    const board = await checkBoardAccess(boardId, req.user._id, true);
+
+    const columnIndex = board.columns.findIndex(
+      (col: any) => col._id.toString() === columnId
+    );
+
+    if (columnIndex === -1) {
+      return res.status(404).json({ message: "Column not found" });
+    }
+
+    if (newOrder < 0 || newOrder >= board.columns.length) {
+      return res.status(400).json({
+        message: "Invalid order value",
+      });
+    }
+
+    const column = board.columns[columnIndex];
+    const oldOrder = column.order;
+
+    // Update orders
+    board.columns.forEach((col) => {
+      if (newOrder > oldOrder) {
+        if (col.order <= newOrder && col.order > oldOrder) {
+          col.order -= 1;
+        }
+      } else {
+        if (col.order >= newOrder && col.order < oldOrder) {
+          col.order += 1;
+        }
+      }
+    });
+
+    column.order = newOrder;
+
+    // Sort columns by order
+    board.columns.sort((a, b) => a.order - b.order);
+
+    await board.save();
+    res.json({ message: "Column order updated successfully" });
   } catch (error) {
     handleServerError(res, error);
   }
