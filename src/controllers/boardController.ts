@@ -173,6 +173,31 @@ export const getBoards = async (req: AuthRequest, res: Response) => {
   }
 };
 
+export const getSimpleBoards = async (req: AuthRequest, res: Response) => {
+  try {
+    const boards = await Board.find({
+      $or: [{ owner: req.user._id }, { members: req.user._id }],
+    })
+      .populate("owner", "name description email")
+      .select("name description owner");
+
+    const simplifiedBoards = boards.map((board: any) => ({
+      _id: board._id,
+      name: board.name,
+      description: board.description,
+      owner: {
+        _id: board.owner._id,
+        name: board.owner.name,
+        email: board.owner.email,
+      },
+    }));
+
+    res.json(simplifiedBoards);
+  } catch (error) {
+    handleServerError(res, error);
+  }
+};
+
 // Board Bilgisi Getirme
 export const getBoardById = async (req: AuthRequest, res: Response) => {
   try {
@@ -294,7 +319,7 @@ export const addColumnToBoard = async (
     const board = await checkBoardAccess(
       req.params.boardId,
       req.user._id,
-      true
+      false
     );
 
     if (board.columns.length >= 10) {
@@ -350,7 +375,7 @@ export const updateBoardColumn = async (
     const { boardId, columnId } = req.params; // Get columnId from params instead of body
     const { name, type, color, limit } = req.body; // Destructure the actual fields we expect
 
-    const board = await checkBoardAccess(boardId, req.user._id, true);
+    const board = await checkBoardAccess(boardId, req.user._id, false);
 
     const columnIndex = board.columns.findIndex(
       (col: any) => col._id.toString() === columnId
@@ -431,7 +456,7 @@ export const updateColumnOrder = async (
   try {
     const { boardId } = req.params;
     const { columnId, newOrder } = req.body;
-    const board = await checkBoardAccess(boardId, req.user._id, true);
+    const board = await checkBoardAccess(boardId, req.user._id, false);
 
     const columnIndex = board.columns.findIndex(
       (col: any) => col._id.toString() === columnId

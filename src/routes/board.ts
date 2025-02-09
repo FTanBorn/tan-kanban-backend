@@ -19,6 +19,7 @@ import {
   getMyInvitations,
   leaveBoard,
   removeMember,
+  getSimpleBoards,
 } from "../controllers/boardController";
 
 const router = Router();
@@ -35,6 +36,9 @@ router
   .route("/")
   .get(getBoards as any)
   .post(createBoard as any);
+
+// board.ts (routes)
+router.get("/simple", protect as any, getSimpleBoards as any);
 
 router
   .route("/:id")
