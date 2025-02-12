@@ -9,6 +9,9 @@ export enum NotificationType {
   MEMBER_LEFT = "MEMBER_LEFT", // Üye tahtadan ayrıldığında
   MEMBER_REMOVED = "MEMBER_REMOVED", // Üye yönetici tarafından kaldırıldığında
   BOARD_UPDATED = "BOARD_UPDATED", // Tahta güncellendiğinde bildirim gönderilir
+  ASSIGNED = "ASSIGNED",
+  TASK_COMPLETED = "TASK_COMPLETED",
+  MENTIONED = "MENTIONED",
 }
 
 // Bildirim önceliklerini belirledim, böylece bazı bildirimlerin daha önemli olduğunu belirtebilirim

@@ -18,6 +18,7 @@ export interface IColumnData {
   type: ColumnType;
   color: string;
   limit?: number;
+  tasks: ITask[];
 }
 
 // Board için interface
@@ -33,6 +34,91 @@ export interface IBoardData {
 export interface IBoard extends IBoardData, Document {
   createDefaultColumns(): Promise<void>;
 }
+
+export enum TaskPriority {
+  LOW = "low",
+  MEDIUM = "medium",
+  HIGH = "high",
+  URGENT = "urgent",
+}
+
+export enum TaskStatus {
+  TODO = "todo",
+  IN_PROGRESS = "in_progress",
+  COMPLETED = "completed",
+  BLOCKED = "blocked",
+}
+
+export interface IComment {
+  _id?: Types.ObjectId;
+  content: string;
+  createdBy: Types.ObjectId;
+  createdAt: Date;
+}
+
+export interface ITask {
+  _id?: Types.ObjectId;
+  title: string;
+  description?: string;
+  priority?: TaskPriority;
+  status?: TaskStatus;
+  dueDate?: Date;
+  assignees?: Types.ObjectId[];
+  labels?: string[];
+  comments?: IComment[];
+  order: number;
+  columnId: string;
+}
+
+// Comment alt şeması
+const commentSchema = new Schema<IComment>({
+  content: {
+    type: String,
+    required: true,
+  },
+  createdBy: {
+    type: Schema.Types.ObjectId,
+    ref: "User",
+    required: true,
+  },
+  createdAt: {
+    type: Date,
+    default: Date.now,
+  },
+});
+
+// Task alt şeması
+const taskSchema = new Schema<ITask>({
+  title: {
+    type: String,
+    required: true,
+  },
+  description: String,
+  priority: {
+    type: String,
+    enum: Object.values(TaskPriority),
+  },
+  status: {
+    type: String,
+    enum: Object.values(TaskStatus),
+  },
+  dueDate: Date,
+  assignees: [
+    {
+      type: Schema.Types.ObjectId,
+      ref: "User",
+    },
+  ],
+  labels: [String],
+  comments: [commentSchema],
+  order: {
+    type: Number,
+    required: true,
+  },
+  columnId: {
+    type: String,
+  },
+});
 
 // Column alt şeması
 const columnSchema = new Schema<IColumnData>({
@@ -64,6 +150,7 @@ const columnSchema = new Schema<IColumnData>({
     min: 0,
     max: 100,
   },
+  tasks: [taskSchema],
 });
 
 // Board ana şeması
@@ -98,9 +185,10 @@ boardSchema.methods.createDefaultColumns = async function (this: IBoard) {
     {
       name: "To Do",
       order: 0,
-      isDefault: true,
+      isDefault: false,
       type: ColumnType.TODO,
       color: "#EDF2F7",
+      tasks: [],
     },
     {
       name: "In Progress",
@@ -108,6 +196,7 @@ boardSchema.methods.createDefaultColumns = async function (this: IBoard) {
       isDefault: true,
       type: ColumnType.IN_PROGRESS,
       color: "#E9ECEF",
+      tasks: [],
     },
     {
       name: "Done",
@@ -115,6 +204,7 @@ boardSchema.methods.createDefaultColumns = async function (this: IBoard) {
       isDefault: true,
       type: ColumnType.DONE,
       color: "#E2E8F0",
+      tasks: [],
     },
   ];
 

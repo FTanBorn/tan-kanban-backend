@@ -343,6 +343,7 @@ export const addColumnToBoard = async (
       isDefault: false,
       color,
       limit,
+      tasks: [],
     };
 
     board.columns.push(newColumn);
