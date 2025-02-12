@@ -154,7 +154,11 @@ export const createBoard = async (
       members: [req.user._id],
     });
 
-    res.status(201).json(board);
+    const populatedBoard = await Board.findById(board._id)
+      .populate("owner", "name email")
+      .exec();
+
+    res.status(201).json(populatedBoard);
   } catch (error) {
     handleServerError(res, error);
   }
