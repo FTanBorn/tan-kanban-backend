@@ -169,7 +169,9 @@ export const getBoards = async (req: AuthRequest, res: Response) => {
   try {
     const boards = await Board.find({
       $or: [{ owner: req.user._id }, { members: req.user._id }],
-    }).populate("owner", "name email");
+    })
+      .populate("owner", "name email")
+      .populate("members", "name email");
 
     res.json(boards);
   } catch (error) {
