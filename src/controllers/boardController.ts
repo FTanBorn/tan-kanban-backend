@@ -7,12 +7,6 @@ import BoardInvitation from "../models/BoardInvitation";
 import { NotificationType, NotificationPriority } from "../models/Notification";
 import Notification from "../models/Notification";
 
-// Request interfaces
-interface CreateBoardRequest {
-  name: string;
-  description?: string;
-}
-
 interface UpdateBoardRequest {
   name?: string;
   description?: string;
@@ -56,12 +50,6 @@ interface BoardDocument extends Document {
   members: Types.ObjectId[];
 }
 
-interface UserInfo {
-  _id: Types.ObjectId;
-  name: string;
-  email: string;
-}
-
 interface CreateBoardRequest {
   name: string;
   description?: string;
@@ -71,11 +59,6 @@ interface CreateBoardRequest {
 interface UpdateBoardRequest {
   name?: string;
   description?: string;
-}
-
-// Board üyeleri eklemek için veri tipi
-interface AddMemberRequest {
-  email: string;
 }
 
 // Yardımcı Fonksiyonlar
@@ -156,6 +139,7 @@ export const createBoard = async (
 
     const populatedBoard = await Board.findById(board._id)
       .populate("owner", "name email")
+      .populate("members", "name email")
       .exec();
 
     res.status(201).json(populatedBoard);
@@ -243,11 +227,16 @@ export const updateBoard = async (
       req.params.id
     );
 
-    const oldName = board.name; // Eski board adını saklayalım
+    const oldName = board.name;
     if (name) board.name = name;
     if (description) board.description = description;
 
     const updatedBoard = await board.save();
+
+    // Populate işlemi ekleyelim
+    const populatedBoard = await Board.findById(updatedBoard._id)
+      .populate("owner", "name email")
+      .populate("members", "name email");
 
     // Tüm üyelere bildirim gönder (board sahibi hariç)
     const notifications = board.members
@@ -274,7 +263,7 @@ export const updateBoard = async (
       await Notification.insertMany(notifications);
     }
 
-    res.json(updatedBoard);
+    res.json(populatedBoard);
   } catch (error) {
     handleServerError(res, error);
   }
