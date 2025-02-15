@@ -155,7 +155,9 @@ export const getBoards = async (req: AuthRequest, res: Response) => {
       $or: [{ owner: req.user._id }, { members: req.user._id }],
     })
       .populate("owner", "name email")
-      .populate("members", "name email");
+      .populate("members", "name email")
+      .populate("columns.tasks.assignees", "name email")
+      .lean();
 
     res.json(boards);
   } catch (error) {
@@ -169,7 +171,9 @@ export const getSimpleBoards = async (req: AuthRequest, res: Response) => {
       $or: [{ owner: req.user._id }, { members: req.user._id }],
     })
       .populate("owner", "name description email")
-      .select("name description owner");
+      .select("name description owner")
+      .populate("columns.tasks.assignees", "name email")
+      .lean();
 
     const simplifiedBoards = boards.map((board: any) => ({
       _id: board._id,
@@ -193,16 +197,18 @@ export const getBoardById = async (req: AuthRequest, res: Response) => {
   try {
     const board = await Board.findById(req.params.id)
       .populate("owner", "name email")
-      .populate("members", "name email");
+      .populate("members", "name email")
+      .populate("columns.tasks.assignees", "name email") // Task assignees'leri populate et
+      .lean();
 
     if (!board) {
       return res.status(404).json({ message: "Board not found" });
     }
 
     const isOwnerOrMember =
-      (board.owner as any)._id.toString() === req.user._id.toString() ||
+      board.owner._id.toString() === req.user._id.toString() ||
       board.members.some(
-        (member) => (member as any)._id.toString() === req.user._id.toString()
+        (member) => member._id.toString() === req.user._id.toString()
       );
 
     if (!isOwnerOrMember) {

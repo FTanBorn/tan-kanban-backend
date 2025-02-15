@@ -6,14 +6,17 @@ import Board, {
   TaskPriority,
   IBoard,
   IComment,
+  IColumnData,
 } from "../models/Board";
 import { NotificationType, NotificationPriority } from "../models/Notification";
 import Notification from "../models/Notification";
+import User from "../models/User";
 
+// Interface tanımlamaları
 interface CreateTaskDTO {
   title: string;
   description?: string;
-  columnId: string; // boardId yerine columnId
+  columnId: string;
   priority?: TaskPriority;
   dueDate?: Date;
   assignees?: string[];
@@ -27,6 +30,7 @@ interface UpdateTaskDTO {
   dueDate?: Date;
   status?: TaskStatus;
   labels?: string[];
+  assignees?: string[];
 }
 
 interface MoveTaskDTO {
@@ -34,19 +38,119 @@ interface MoveTaskDTO {
   order: number;
 }
 
-export class TaskService {
-  // Task oluşturma
-  static async createTask(dto: CreateTaskDTO, userId: string): Promise<ITask> {
-    try {
-      // columnId kontrolü
-      if (!Types.ObjectId.isValid(dto.columnId)) {
-        throw new Error("Invalid column ID");
-      }
+interface IUserInfo {
+  _id: Types.ObjectId;
+  name: string;
+  email: string;
+}
 
-      // Board'u kolondan bulalım
-      const board = await Board.findOne({
-        "columns._id": dto.columnId,
-      });
+interface ITaskResponse extends Omit<ITask, "assignees"> {
+  assignees: IUserInfo[];
+}
+
+export class TaskService {
+  private static async populateTaskData(
+    board: IBoard,
+    task: ITask
+  ): Promise<ITaskResponse> {
+    const populatedBoard = await Board.findById(board._id).populate(
+      "members",
+      "name email"
+    );
+
+    if (!populatedBoard) {
+      throw new Error("Board not found");
+    }
+
+    const populatedAssignees =
+      task.assignees?.map((assigneeId) => {
+        const member = populatedBoard.members.find(
+          (m) => m._id.toString() === assigneeId.toString()
+        );
+        return member
+          ? {
+              _id: member._id,
+              name: (member as any).name,
+              email: (member as any).email,
+            }
+          : {
+              _id: assigneeId,
+              name: "Unknown",
+              email: "unknown@email.com",
+            };
+      }) || [];
+
+    return {
+      ...task,
+      assignees: populatedAssignees,
+    };
+  }
+
+  private static async notifyTaskCompletion(
+    task: ITask,
+    boardId: string,
+    userId: string
+  ): Promise<void> {
+    if (!task.assignees?.length) return;
+
+    const notifications = task.assignees
+      .filter((assignee) => assignee.toString() !== userId)
+      .map((assignee) => ({
+        recipient: assignee,
+        sender: new Types.ObjectId(userId),
+        board: new Types.ObjectId(boardId),
+        type: NotificationType.TASK_COMPLETED,
+        priority: NotificationPriority.LOW,
+        message: `Task "${task.title}" has been marked as completed`,
+        metadata: {
+          taskId: task._id,
+          boardId,
+        },
+      }));
+
+    if (notifications.length > 0) {
+      await Notification.insertMany(notifications);
+    }
+  }
+
+  private static findTaskInBoard(
+    board: IBoard,
+    taskId: string
+  ): {
+    task: ITask | null;
+    column: IColumnData | null;
+    taskIndex: number;
+  } {
+    let foundTask: ITask | null = null;
+    let foundColumn: IColumnData | null = null;
+    let taskIndex = -1;
+
+    for (const column of board.columns) {
+      const index = column.tasks.findIndex((t) => t._id?.toString() === taskId);
+      if (index !== -1) {
+        foundTask = column.tasks[index];
+        foundColumn = column;
+        taskIndex = index;
+        break;
+      }
+    }
+
+    return { task: foundTask, column: foundColumn, taskIndex };
+  }
+
+  private static normalizeTaskOrders(column: IColumnData): void {
+    column.tasks.sort((a, b) => a.order - b.order);
+    column.tasks.forEach((task, index) => {
+      task.order = index;
+    });
+  }
+
+  static async createTask(
+    dto: CreateTaskDTO,
+    userId: string
+  ): Promise<ITaskResponse> {
+    try {
+      const board = await Board.findOne({ "columns._id": dto.columnId });
 
       if (!board) {
         throw new Error("Board not found for this column");
@@ -64,10 +168,7 @@ export class TaskService {
         throw new Error("Column task limit reached");
       }
 
-      const order =
-        column.tasks.length > 0
-          ? Math.max(...column.tasks.map((task) => task.order)) + 1
-          : 0;
+      const newOrder = column.tasks.length;
 
       const newTask: ITask = {
         _id: new Types.ObjectId(),
@@ -76,95 +177,67 @@ export class TaskService {
         priority: dto.priority || TaskPriority.LOW,
         status: TaskStatus.TODO,
         dueDate: dto.dueDate,
-        assignees:
-          dto.assignees
-            ?.map((id) =>
-              Types.ObjectId.isValid(id) ? new Types.ObjectId(id) : null
-            )
-            .filter((id): id is Types.ObjectId => id !== null) || [],
+        assignees: dto.assignees?.map((id) => new Types.ObjectId(id)) || [],
         labels: dto.labels || [],
-        order,
+        order: newOrder,
+        columnId: dto.columnId,
         comments: [],
-        columnId: dto.columnId, // columnId kullanıyoruz
       };
 
       column.tasks.push(newTask);
       await board.save();
 
-      // Bildirim kısmı
       if (dto.assignees?.length) {
-        const notifications = dto.assignees
-          .filter((id) => Types.ObjectId.isValid(id))
-          .map((assigneeId) => ({
-            recipient: new Types.ObjectId(assigneeId),
-            sender: new Types.ObjectId(userId),
-            board: board._id, // board._id kullanıyoruz
-            type: NotificationType.ASSIGNED,
-            priority: NotificationPriority.MEDIUM,
-            message: `You have been assigned to task "${dto.title}"`,
-            metadata: {
-              taskId: newTask._id,
-              boardId: board._id, // board._id kullanıyoruz
-              columnId: dto.columnId,
-            },
-          }));
+        const notifications = dto.assignees.map((assigneeId) => ({
+          recipient: new Types.ObjectId(assigneeId),
+          sender: new Types.ObjectId(userId),
+          board: board._id,
+          type: NotificationType.ASSIGNED,
+          priority: NotificationPriority.MEDIUM,
+          message: `You have been assigned to task "${dto.title}"`,
+          metadata: {
+            taskId: newTask._id,
+            boardId: board._id,
+            columnId: dto.columnId,
+          },
+        }));
 
-        if (notifications.length > 0) {
-          await Notification.insertMany(notifications);
-        }
+        await Notification.insertMany(notifications);
       }
 
-      return newTask;
+      const assigneeDetails = await User.find(
+        { _id: { $in: newTask.assignees } },
+        "name email"
+      );
+
+      return {
+        _id: newTask._id,
+        title: newTask.title,
+        description: newTask.description || "",
+        status: newTask.status,
+        priority: newTask.priority,
+        dueDate: newTask.dueDate,
+        labels: newTask.labels || [],
+        comments: newTask.comments || [],
+        order: newTask.order,
+        columnId: newTask.columnId,
+        assignees: assigneeDetails.map((assignee: any) => ({
+          _id: assignee._id,
+          name: assignee.name,
+          email: assignee.email,
+        })),
+      };
     } catch (error) {
-      if (error instanceof Error) {
-        throw error;
-      }
-      throw new Error("Failed to create task");
+      throw error;
     }
   }
 
-  // Tasks'ları getir
-  static async getTasks(boardId: string, columnId: string): Promise<ITask[]> {
-    if (!Types.ObjectId.isValid(boardId)) {
-      throw new Error("Invalid board ID");
-    }
-
-    const board = await Board.findById(boardId);
-    if (!board) {
-      throw new Error("Board not found");
-    }
-
-    const column = board.columns.find(
-      (col) => col._id?.toString() === columnId
-    );
-    if (!column) {
-      throw new Error("Column not found");
-    }
-
-    return column.tasks.sort((a, b) => a.order - b.order);
-  }
-
-  // Tekil task getir
-  static async getTaskById(
-    boardId: string,
-    taskId: string
-  ): Promise<ITask | null> {
-    const board = await Board.findById(boardId);
-    if (!board) {
-      throw new Error("Board not found");
-    }
-
-    const { task } = this.findTaskInBoard(board, taskId);
-    return task;
-  }
-
-  // Task güncelleme
   static async updateTask(
     taskId: string,
     boardId: string,
     updates: UpdateTaskDTO,
     userId: string
-  ): Promise<ITask> {
+  ): Promise<ITaskResponse> {
     const board = await Board.findById(boardId);
     if (!board) {
       throw new Error("Board not found");
@@ -175,25 +248,50 @@ export class TaskService {
       throw new Error("Task not found");
     }
 
-    // Update task fields
     Object.assign(task, {
-      ...task,
       ...updates,
       comments: task.comments || [],
-      assignees: task.assignees || [],
+      assignees: updates.assignees
+        ? updates.assignees.map((id) => new Types.ObjectId(id))
+        : task.assignees || [],
     });
 
     await board.save();
 
-    // Notify assignees if task is completed
     if (updates.status === TaskStatus.COMPLETED) {
       await this.notifyTaskCompletion(task, boardId, userId);
     }
 
-    return task;
+    const populatedBoard = await Board.findOne(
+      { "columns.tasks._id": taskId },
+      { "columns.tasks.$": 1 }
+    ).populate("columns.tasks.assignees", "name email");
+
+    if (!populatedBoard || !populatedBoard.columns[0]?.tasks[0]) {
+      throw new Error("Updated task not found");
+    }
+
+    const updatedTask = populatedBoard.columns[0].tasks[0];
+
+    return {
+      _id: updatedTask._id,
+      title: updatedTask.title,
+      description: updatedTask.description || "",
+      status: updatedTask.status,
+      priority: updatedTask.priority,
+      dueDate: updatedTask.dueDate,
+      labels: updatedTask.labels || [],
+      comments: updatedTask.comments || [],
+      order: updatedTask.order,
+      columnId: updatedTask.columnId,
+      assignees: (updatedTask.assignees || []).map((assignee) => ({
+        _id: assignee._id,
+        name: (assignee as any).name || "Unknown",
+        email: (assignee as any).email || "unknown@email.com",
+      })),
+    };
   }
 
-  // Task silme
   static async deleteTask(taskId: string, boardId: string): Promise<void> {
     const board = await Board.findById(boardId);
     if (!board) {
@@ -206,66 +304,95 @@ export class TaskService {
     }
 
     column.tasks.splice(taskIndex, 1);
+    this.normalizeTaskOrders(column); // Sıralamayı yeniden düzenle
     await board.save();
   }
 
-  // Task taşıma
   static async moveTask(
     taskId: string,
     boardId: string,
     { targetColumnId, order }: MoveTaskDTO
-  ): Promise<ITask> {
+  ): Promise<ITaskResponse> {
     const board = await Board.findById(boardId);
     if (!board) {
       throw new Error("Board not found");
     }
 
     const {
-      task: sourceTask,
+      task,
       column: sourceColumn,
       taskIndex: sourceTaskIndex,
     } = this.findTaskInBoard(board, taskId);
+    if (!task || !sourceColumn || sourceTaskIndex === -1) {
+      throw new Error("Task not found");
+    }
 
-    // Hedef kolon kontrolü
     const targetColumn = board.columns.find(
       (col) => col._id?.toString() === targetColumnId
     );
 
-    // Task'ı kaynak kolondan çıkar
-    sourceColumn.tasks.splice(sourceTaskIndex, 1);
-
-    // Task'ın sıralamasını güncelle
-    if (!sourceTask) {
-      throw new Error("Source task not found");
-    }
-    sourceTask.order = order;
-
-    // Hedef kolon kontrolü
     if (!targetColumn) {
       throw new Error("Target column not found");
     }
 
-    // Hedef kolondaki task'ların sıralamasını ayarla
-    targetColumn.tasks.forEach((task) => {
-      if (task.order >= order) {
-        task.order += 1;
-      }
-    });
+    if (targetColumn.limit && targetColumn.tasks.length >= targetColumn.limit) {
+      throw new Error("Target column task limit reached");
+    }
+
+    // Task'ı kaynak kolondan çıkar
+    sourceColumn.tasks.splice(sourceTaskIndex, 1);
+    this.normalizeTaskOrders(sourceColumn); // Kaynak kolonun sıralamasını yeniden düzenle
 
     // Task'ı hedef kolona ekle
-    targetColumn.tasks.push(sourceTask);
+    task.columnId = targetColumnId;
+    task.order = order;
+    targetColumn.tasks.splice(order, 0, task);
+    this.normalizeTaskOrders(targetColumn); // Hedef kolonun sıralamasını yeniden düzenle
 
     await board.save();
-    return sourceTask;
+    return await this.populateTaskData(board, task);
   }
 
-  // Yorum ekleme
+  static async getTasks(boardId: string, columnId: string): Promise<ITask[]> {
+    const board = await Board.findById(boardId);
+    if (!board) {
+      throw new Error("Board not found");
+    }
+
+    const column = board.columns.find(
+      (col) => col._id?.toString() === columnId
+    );
+
+    if (!column) {
+      throw new Error("Column not found");
+    }
+
+    return column.tasks.sort((a, b) => a.order - b.order);
+  }
+
+  static async getTaskById(
+    boardId: string,
+    taskId: string
+  ): Promise<ITaskResponse | null> {
+    const board = await Board.findById(boardId);
+    if (!board) {
+      throw new Error("Board not found");
+    }
+
+    const { task } = this.findTaskInBoard(board, taskId);
+    if (!task) {
+      return null;
+    }
+
+    return await this.populateTaskData(board, task);
+  }
+
   static async addComment(
     taskId: string,
     boardId: string,
     content: string,
     userId: string
-  ): Promise<ITask> {
+  ): Promise<ITaskResponse> {
     const board = await Board.findById(boardId);
     if (!board) {
       throw new Error("Board not found");
@@ -291,17 +418,17 @@ export class TaskService {
     await board.save();
 
     await this.handleMentions(task, content, userId, boardId);
-    return task;
+
+    return await this.populateTaskData(board, task);
   }
 
-  // Yorum güncelleme
   static async updateComment(
     taskId: string,
     boardId: string,
     commentId: string,
     content: string,
     userId: string
-  ): Promise<ITask> {
+  ): Promise<ITaskResponse> {
     const board = await Board.findById(boardId);
     if (!board) {
       throw new Error("Board not found");
@@ -328,16 +455,15 @@ export class TaskService {
     comment.content = content;
     await board.save();
 
-    return task;
+    return await this.populateTaskData(board, task);
   }
 
-  // Yorum silme
   static async deleteComment(
     taskId: string,
     boardId: string,
     commentId: string,
     userId: string
-  ): Promise<ITask> {
+  ): Promise<ITaskResponse> {
     const board = await Board.findById(boardId);
     if (!board) {
       throw new Error("Board not found");
@@ -366,16 +492,15 @@ export class TaskService {
     task.comments.splice(commentIndex, 1);
     await board.save();
 
-    return task;
+    return await this.populateTaskData(board, task);
   }
 
-  // Kullanıcı atama
   static async assignUser(
     taskId: string,
     boardId: string,
     assigneeId: string,
     userId: string
-  ): Promise<ITask> {
+  ): Promise<ITaskResponse> {
     const board = await Board.findById(boardId);
     if (!board) {
       throw new Error("Board not found");
@@ -409,15 +534,14 @@ export class TaskService {
       });
     }
 
-    return task;
+    return await this.populateTaskData(board, task);
   }
 
-  // Kullanıcı çıkarma
   static async unassignUser(
     taskId: string,
     boardId: string,
     assigneeId: string
-  ): Promise<ITask> {
+  ): Promise<ITaskResponse> {
     const board = await Board.findById(boardId);
     if (!board) {
       throw new Error("Board not found");
@@ -435,66 +559,9 @@ export class TaskService {
     task.assignees = task.assignees.filter(
       (id) => id.toString() !== assigneeId
     );
-
     await board.save();
-    return task;
-  }
 
-  // Private helper methods
-  private static findTaskInBoard(
-    board: IBoard,
-    taskId: string
-  ): {
-    task: ITask | null;
-    column: any | null;
-    taskIndex: number;
-    columnIndex: number;
-  } {
-    let foundTask: ITask | null = null;
-    let foundColumn: any | null = null;
-    let taskIndex = -1;
-    let columnIndex = -1;
-
-    board.columns.forEach((col, colIndex) => {
-      const tIndex = col.tasks.findIndex((t) => t._id?.toString() === taskId);
-      if (tIndex !== -1) {
-        foundTask = col.tasks[tIndex];
-        foundColumn = col;
-        taskIndex = tIndex;
-        columnIndex = colIndex;
-      }
-    });
-
-    return { task: foundTask, column: foundColumn, taskIndex, columnIndex };
-  }
-
-  private static async notifyTaskCompletion(
-    task: ITask,
-    boardId: string,
-    userId: string
-  ) {
-    if (!task.assignees) {
-      return;
-    }
-
-    const notifications = task.assignees
-      .filter((assignee) => assignee.toString() !== userId)
-      .map((assignee) => ({
-        recipient: assignee,
-        sender: new Types.ObjectId(userId),
-        board: new Types.ObjectId(boardId),
-        type: NotificationType.TASK_COMPLETED,
-        priority: NotificationPriority.LOW,
-        message: `Task "${task.title}" has been marked as completed`,
-        metadata: {
-          taskId: task._id,
-          boardId,
-        },
-      }));
-
-    if (notifications.length > 0) {
-      await Notification.insertMany(notifications);
-    }
+    return await this.populateTaskData(board, task);
   }
 
   private static async handleMentions(
@@ -502,7 +569,7 @@ export class TaskService {
     content: string,
     userId: string,
     boardId: string
-  ) {
+  ): Promise<void> {
     const mentionRegex = /@\[([^\]]+)\]\((\w+)\)/g;
     const mentions = new Set<string>();
     let match;
